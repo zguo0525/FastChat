@@ -26,9 +26,12 @@ from torch.utils.data import Dataset
 import transformers
 from transformers import Trainer
 from transformers.trainer_pt_utils import LabelSmoother
-
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 from fastchat.conversation import SeparatorStyle
 from fastchat.model.model_adapter import get_conversation_template
+from moduleformer2_hf.moduleformer import ModuleFormerForCausalLM, ModuleFormerConfig
+AutoConfig.register("moduleformer", ModuleFormerConfig)
+AutoModelForCausalLM.register(ModuleFormerConfig, ModuleFormerForCausalLM)
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
@@ -263,7 +266,7 @@ def train():
     local_rank = training_args.local_rank
 
     # Set RoPE scaling factor
-    config = transformers.AutoConfig.from_pretrained(
+    config = AutoConfig.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
         trust_remote_code=model_args.trust_remote_code,
@@ -275,14 +278,17 @@ def train():
     config.use_cache = False
 
     # Load model and tokenizer
-    model = transformers.AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         cache_dir=training_args.cache_dir,
         trust_remote_code=model_args.trust_remote_code,
     )
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
+    model = model.to(dtype=torch.bfloat16)
+    #print(model)
+    tokenizer = AutoTokenizer.from_pretrained(
+        #model_args.model_name_or_path,
+        "mistralai/Mistral-7B-v0.1",
         cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side=model_args.padding_side,
@@ -311,6 +317,7 @@ def train():
     if trainer.is_deepspeed_enabled:
         trainer.save_model()
     else:
+        #trainer.save_model()
         trainer_save_model_safe(trainer)
 
 

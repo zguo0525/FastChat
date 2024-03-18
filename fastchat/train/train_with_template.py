@@ -28,9 +28,12 @@ from torch.utils.data import Dataset
 import transformers
 from transformers import Trainer
 from transformers.trainer_pt_utils import LabelSmoother
-
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 from fastchat.conversation import SeparatorStyle
 from fastchat.model.model_adapter import get_conversation_template
+from moduleformer2_hf.moduleformer import ModuleFormerForCausalLM, ModuleFormerConfig
+AutoConfig.register("moduleformer", ModuleFormerConfig)
+AutoModelForCausalLM.register(ModuleFormerConfig, ModuleFormerForCausalLM)
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
@@ -206,7 +209,7 @@ def preprocess(
         input_ids, targets = tokenize_conversations(conversations, tokenizer)
         targets = mask_targets(conversations, targets, tokenizer, conv)
     else:  # If the data volume is large, use multithreading for processing
-        with Pool() as p:
+        with Pool(processes=64) as p:
             conversations, conv = p.apply_async(
                 apply_prompt_template, (sources, template_id, systems)
             ).get()
@@ -267,14 +270,14 @@ class LazySupervisedDataset(Dataset):
 
         rank0_print("Formatting inputs...Skip in lazy mode")
         self.raw_data = raw_data
-        self.cached_data_dict = {}
+        #self.cached_data_dict = {}
 
     def __len__(self):
         return len(self.raw_data)
 
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
-        if i in self.cached_data_dict:
-            return self.cached_data_dict[i]
+        # if i in self.cached_data_dict:
+        #     return self.cached_data_dict[i]
 
         ret = preprocess(
             [self.raw_data[i]["conversations"]],
@@ -287,7 +290,7 @@ class LazySupervisedDataset(Dataset):
             labels=ret["labels"][0],
             attention_mask=ret["attention_mask"][0],
         )
-        self.cached_data_dict[i] = ret
+        #self.cached_data_dict[i] = ret
 
         return ret
 
@@ -342,7 +345,7 @@ def train():
     )
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     local_rank = training_args.local_rank
-    config = transformers.AutoConfig.from_pretrained(
+    config = AutoConfig.from_pretrained(
         model_args.model_name_or_path,
         trust_remote_code=True,
         cache_dir=training_args.cache_dir,
@@ -353,7 +356,7 @@ def train():
         scaling_factor = float(math.ceil(training_args.model_max_length / orig_ctx_len))
         config.rope_scaling = {"type": "linear", "factor": scaling_factor}
     config.use_cache = False
-    model = transformers.AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         trust_remote_code=True,
@@ -361,10 +364,11 @@ def train():
     )
     # Tie the weights
     model.tie_weights()
-
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
-        config=config,
+    model = model.to(dtype=torch.bfloat16)
+    tokenizer = AutoTokenizer.from_pretrained(
+        "mistralai/Mistral-7B-v0.1",
+        #model_args.model_name_or_path,
+        #config=config,
         trust_remote_code=True,
         cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
@@ -377,7 +381,7 @@ def train():
     print(f"tokens len: {len(tokenizer)}")
     model.resize_token_embeddings(len(tokenizer))
 
-    template_id = model_args.model_name_or_path
+    template_id = "lmsys/vicuna-7b-v1.5"
     data_module = make_supervised_data_module(
         tokenizer=tokenizer,
         template_id=template_id,
