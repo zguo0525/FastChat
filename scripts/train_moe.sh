@@ -1,7 +1,7 @@
 export PYTHONFAULTHANDLER=1
 source ./scripts/ccc_nccl.sh
 
-export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:1024
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:2048
 
 # export TORCH_DISTRIBUTED_DEBUG=DETAIL
 # export RANK=$((LSF_PM_XTASKID - 1))
@@ -12,10 +12,10 @@ echo "Distributed training:"
 echo MASTER_ADDR $MASTER_ADDR
 echo MASTER_PORT $MASTER_PORT
 # echo RANK $RANK
-export OMP_NUM_THREADS=64
+export OMP_NUM_THREADS=32
 
 # Start the GPU monitor in the background
-(while :; do nvidia-smi; sleep 300; done) &
+(while :; do nvidia-smi; sleep 100; done) &
 
 # Train the model
 MKL_SERVICE_FORCE_INTEL=1
@@ -35,6 +35,7 @@ torchrun --nproc_per_node=$NUM_GPU \
     --per_device_train_batch_size ${BSZ} \
     --per_device_eval_batch_size 32 \
     --gradient_accumulation_steps ${ACC_STEPS} \
+    --optim "adafactor" \
     --evaluation_strategy "steps" \
     --eval_steps 4000 \
     --save_strategy "steps" \
@@ -45,10 +46,12 @@ torchrun --nproc_per_node=$NUM_GPU \
     --warmup_ratio 0.04 \
     --lr_scheduler_type "cosine" \
     --logging_steps 100 \
-    --fsdp "full_shard auto_wrap" \
-    --fsdp_transformer_layer_cls_to_wrap 'ModuleFormerBlock' \
+    --deepspeed scripts/ds_config_zero2_offload.json \
     --tf32 True \
     --model_max_length 2048 \
-    --gradient_checkpointing True \
+    --gradient_checkpointing False \
     --lazy_preprocess True
+
+# --fsdp "full_shard auto_wrap" \
+# --fsdp_transformer_layer_cls_to_wrap 'ModuleFormerBlock' \
 
